@@ -33,8 +33,8 @@ port (
     rw        : in std_logic;
     data_wr   : in std_logic_vector(7 downto 0);
     busy      : out std_logic;
-    data_rd   : out std_logic_vector(7 downto 0);
     ack_error : buffer std_logic;
+    data_rd   : out std_logic_vector(7 downto 0);
     sda       : inout std_logic;
     scl       : inout std_logic);
 end component;
@@ -55,26 +55,20 @@ end component;
 -- for init
 type machine is (
     PowerUp,
+    For_Wait,
     Initialize,
     Ready,
     Send,
     I2CSend
     );
 
+signal init_state : integer := 0;
+signal after_state : integer := 0;
 signal state : machine := PowerUp;
-signal after_state : machine := PowerUp;
 signal SClockCounter : integer := 0;
 signal POLCDData     : std_logic_vector(7 downto 0);   -- Data included 4-Bit interface for I2C Com 
 signal ReadyCheck : std_logic := '0';
-
--- DEBUG
-attribute mark_debug : string;
-attribute mark_debug of POLCDData : signal is "1";
-attribute mark_debug of SEnable : signal is "1";
-attribute mark_debug of ReadyCheck : signal is "1";
-
-
--- DEBUG END
+signal WaitValue : integer := 0;
 
 begin
 
@@ -87,117 +81,174 @@ begin
                 if (SClockCounter < (50000000 * GSysClk - 1)) then       -- 50ms wait ** 1000 added for test
                     SClockCounter <= SClockCounter + 1;
                 else
-                    -- 
-                    SEnable <= '1';
-                    SAddr   <= "0111111";
-                    --
+
                     SClockCounter <= 0;
                     state <= Initialize;
                 end if;
+            
+            when For_Wait => 
+                POBusy <= '1';          
+                if (SClockCounter < (WaitValue * GSysClk - 1)) then   
+                    SClockCounter <= SClockCounter + 1;
+                else
+
+                    SClockCounter <= 0;
+                    state <= Initialize;
+                end if;
+
 
             when Initialize =>
                 POBusy <= '1';
-                SClockCounter <= SClockCounter + 1;
-
-                if SClockCounter < (10 * GSysClk) then      -- function set
-                    POLCDData <= "00110100";
+            case init_state is
+                when 0 =>            -- function set
+                    POLCDData <= "00111100";
                     state <= I2CSend;
-                elsif SClockCounter < (5000 * GSysClk)  then  -- 5ms wait (more than 4.1ms wait)
-                    POLCDData <= (others => '0');
+                    after_state <= 1; 
+                    WaitValue <= 5000;
+                when 1 =>  -- 5ms wait (more than 4.1ms wait)
+                    POLCDData <= "00001000";
                     state <= I2CSend;
-                elsif SClockCounter < (5010 * GSysClk) then -- function set
-                    POLCDData <= "00110100";
+                    after_state <= 2;
+                    WaitValue <= 10;
+                when 2 => -- function set
+                    POLCDData <= "00111100";
                     state <= I2CSend;
-                elsif SClockCounter < (5110 * GSysClk)  then  -- 100us wait 
-                    POLCDData <= (others => '0');
+                    after_state <= 3;
+                    WaitValue <= 100;
+                when 3 =>  -- 100us wait 
+                    POLCDData <= "00001000";
                     state <= I2CSend;
-                elsif SClockCounter < (5120 * GSysClk) then -- function set
-                    POLCDData <= "00110100";
+                    after_state <= 4;
+                    WaitValue <= 10;
+                when 4 => -- function set
+                    POLCDData <= "00111100";
                     state <= I2CSend;
-                elsif SClockCounter < (5170 * GSysClk)  then  -- 50us wait 
-                    POLCDData <= (others => '0');
+                    after_state <= 5;
+                    WaitValue <= 50;
+                when 5 =>  -- 50us wait 
+                    POLCDData <= "00001000";
                     state <= I2CSend;
-                elsif SClockCounter < (5180 * GSysClk) then -- function set - str 1
-                    POLCDData <= "00100100";
+                    after_state <= 6;
+                    WaitValue <= 10;
+                when 6 => -- function set - str 1
+                    POLCDData <= "00101100";    
                     state <= I2CSend;
-                elsif SClockCounter < (5230 * GSysClk)  then  -- 50us wait 
-                    POLCDData <= (others => '0');
+                    after_state <= 7;  
+                    WaitValue <= 50;
+                when 7 =>  -- 50us wait 
+                    POLCDData <= "00001000";
                     state <= I2CSend;
-                elsif SClockCounter < (5240 * GSysClk) then -- function set - str 2
-                    POLCDData <= "00100100";
+                    after_state <= 8;
+                    WaitValue <= 10;
+                when 8 =>   -- function set - str 2
+                    POLCDData <= "00101100";    
                     state <= I2CSend;
-                elsif SClockCounter < (5250 * GSysClk)  then  -- 10us wait 
-                    POLCDData <= (others => '0');
+                    after_state <= 9;
+                    WaitValue <= 10;
+                when 9 =>  -- 10us wait 
+                    POLCDData <= "00001000";
                     state <= I2CSend;
-                elsif SClockCounter < (5260 * GSysClk) then -- function set - str 3 - N:1 F:1
-                    POLCDData <= "11000100";
+                    after_state <= 10;
+                    WaitValue <= 10;
+                when 10 => -- function set - str 3 
+                    POLCDData <= "11001100";  -- N:1 F:1
                     state <= I2CSend;
-                elsif SClockCounter < (5310 * GSysClk)  then  -- 50us wait 
-                    POLCDData <= (others => '0');
+                    after_state <= 11;
+                    WaitValue <= 50;
+                when 11 =>  -- 50us wait 
+                    POLCDData <= "00001000";
                     state <= I2CSend;
-                elsif SClockCounter < (5320 * GSysClk) then -- function set - str 4
-                    POLCDData <= "00000100";
+                    after_state <= 12;
+                    WaitValue <= 10;
+                when 12 => -- function set - str 4
+                    POLCDData <= "00001100";
                     state <= I2CSend;
-                elsif SClockCounter < (5330 * GSysClk)  then  -- 10us wait 
-                    POLCDData <= (others => '0');
+                    after_state <= 13;
+                    WaitValue <= 10;
+                when 13 =>  -- 10us wait 
+                    POLCDData <= "00001000";
                     state <= I2CSend;
-                elsif SClockCounter < (5340 * GSysClk) then -- function set - str 5     -- Display ON/OFF
-                    POLCDData <= "11110100";
+                    after_state <= 14;
+                    WaitValue <= 10;     
+                when 14 => -- function set - str 5 
+                    POLCDData <= "10001100";    -- Display ON/OFF
                     state <= I2CSend;
-                elsif SClockCounter < (5390 * GSysClk)  then  -- 50us wait 
-                    POLCDData <= (others => '0');
+                    WaitValue <= 50;
+                    after_state <= 15;
+                when 15 =>  -- 50us wait 
+                    POLCDData <= "00001000";
                     state <= I2CSend;
-                elsif SClockCounter < (5400 * GSysClk) then -- function set - str 6
-                    POLCDData <= "00000100";
+                    after_state <= 16;
+                    WaitValue <= 10;
+                when 16 => -- function set - str 6  
+                    POLCDData <= "00001100";
                     state <= I2CSend;
-                elsif SClockCounter < (5410 * GSysClk)  then  -- 10us wait 
-                    POLCDData <= (others => '0');
+                    after_state <= 17;
+                    WaitValue <= 10;
+                when 17 =>  -- 10us wait 
+                    POLCDData <= "00001000";
                     state <= I2CSend;
-                elsif SClockCounter < (5420 * GSysClk) then -- function set - str 7
-                    POLCDData <= "00010100";
+                    after_state <= 18;
+                    WaitValue <= 10;
+                when 18 => -- function set - str 7
+                    POLCDData <= "00011100";    -- Display clear
                     state <= I2CSend;
-                elsif SClockCounter < (7420 * GSysClk)  then  -- 2ms wait
-                    POLCDData <= (others => '0');
+                    after_state <= 19;
+                    WaitValue <= 2000;
+                when 19 =>  -- 2ms wait
+                    POLCDData <= "00001000";
                     state <= I2CSend;
-                elsif SClockCounter < (7430 * GSysClk) then -- function set - str 8
-                    POLCDData <= "00000100";
+                    after_state <= 20;
+                    WaitValue <= 10;
+                when 20 => -- function set - str 8
+                    POLCDData <= "00001100";
                     state <= I2CSend;
-                elsif SClockCounter < (7440 * GSysClk)  then  -- 10us wait 
-                    POLCDData <= (others => '0');
+                    after_state <= 21;
+                    WaitValue <= 10;
+                when 21 =>  -- 10us wait 
+                    POLCDData <= "00001000";
                     state <= I2CSend;
-                elsif SClockCounter < (7450 * GSysClk) then -- function set - str 9
-                    POLCDData <= "00100100";
+                    after_state <= 22;
+                    WaitValue <= 10;
+                when 22 => -- function set - str 9
+                    POLCDData <= "00101100";  -- Entry mode set
                     state <= I2CSend;
-                elsif SClockCounter < (7500 * GSysClk)  then  -- 50us wait 
-                    POLCDData <= (others => '0');
+                    after_state <= 23;
+                    WaitValue <= 50;
+                when 23 =>  -- 50us wait 
+                    POLCDData <= "00001000";
+                    after_state <= 24;
                     state <= I2CSend;
-                else
-                    SClockCounter <= 0;
+                    WaitValue <= 10;
+                when 24 =>
                     POBusy <= '0';
+                    init_state <= 0;
                     state <= Ready;
-                end if;
+                when others => null;
+                end case;
 
             when I2CSend =>
-                -- SBusyPrev <= SBusy;
+                SBusyPrev <= SBusy;
 
-                -- if (SBusyPrev = '0' and SBusy = '1') then
-                -- busy_cnt <= busy_cnt + 1;
-                -- end if;
-                -- case busy_cnt is
-                -- when 0 =>
-                    -- SEnable <= '1';
-                    -- SAddr   <= "0111111";
+                if (SBusyPrev = '0' and SBusy = '1') then
+                busy_cnt <= busy_cnt + 1;
+                end if;
+                case busy_cnt is
+                when 0 =>
+                    SEnable <= '1';
+                    SAddr   <= "0111111";
                     SRW     <= '0';             --write
                     SDataWr <= POLCDData;
-                -- when 1 =>
-                    --SEnable <= '0';
+                when 1 =>
+                    SEnable <= '0';
                     if (SBusy = '0') then
-                    -- busy_cnt <= 0;
-                    -- SBusyPrev <= '0';
-                    state <= Initialize;
+                    busy_cnt <= 0;
+                    SBusyPrev <= '0';
+                    state <= For_Wait;
+                    init_state <= after_state;
                     end if;
-                -- when others => null;
-                -- end case;
+                when others => null;
+                end case;
 
             when Ready =>
                 ReadyCheck <= '1';
