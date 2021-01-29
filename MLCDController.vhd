@@ -15,7 +15,8 @@ port (
     PIOSDA        : inout std_logic;
     PIOSCL        : inout std_logic;
     PIEnable      : in std_logic;
-    PIReset       : in std_logic
+    PIReset       : in std_logic;
+    PIWriteData   : in std_logic_vector(7 downto 0)
 );
 end MLCDController;
 
@@ -57,17 +58,20 @@ type machine is (
     PowerUp,
     For_Wait,
     Initialize,
-    Ready,
+    setRamAddress,
+    writeData,
     Send,
-    I2CSend
+    I2CSend,
+    Idle
     );
-
+    
+signal state : machine := PowerUp;
+signal wait_State : machine := Initialize;
+signal ready_state : integer := 0;
 signal init_state : integer := 0;
 signal after_state : integer := 0;
-signal state : machine := PowerUp;
 signal SClockCounter : integer := 0;
 signal POLCDData     : std_logic_vector(7 downto 0);   -- Data included 4-Bit interface for I2C Com 
-signal ReadyCheck : std_logic := '0';
 signal WaitValue : integer := 0;
 
 begin
@@ -78,7 +82,7 @@ begin
         case state is
             when PowerUp =>
                 POBusy <= '1';          -- wait time that more than 15ms, I selected it 50ms
-                if (SClockCounter < (50000000 * GSysClk - 1)) then       -- 50ms wait ** 1000 added for test
+                if (SClockCounter < (50000 * GSysClk - 1)) then       -- 50ms wait 
                     SClockCounter <= SClockCounter + 1;
                 else
 
@@ -93,12 +97,13 @@ begin
                 else
 
                     SClockCounter <= 0;
-                    state <= Initialize;
+                    state <= wait_State;
                 end if;
 
 
             when Initialize =>
                 POBusy <= '1';
+                wait_State <= Initialize;
             case init_state is
                 when 0 =>            -- function set
                     POLCDData <= "00111100";
@@ -151,7 +156,7 @@ begin
                     after_state <= 10;
                     WaitValue <= 10;
                 when 10 => -- function set - str 3 
-                    POLCDData <= "11001100";  -- N:1 F:1
+                    POLCDData <= "10001100";  -- N:1 F:1
                     state <= I2CSend;
                     after_state <= 11;
                     WaitValue <= 50;
@@ -171,7 +176,7 @@ begin
                     after_state <= 14;
                     WaitValue <= 10;     
                 when 14 => -- function set - str 5 
-                    POLCDData <= "10001100";    -- Display ON/OFF
+                    POLCDData <= "11001100";    -- Display ON/OFF - D - C - B
                     state <= I2CSend;
                     WaitValue <= 50;
                     after_state <= 15;
@@ -211,7 +216,7 @@ begin
                     after_state <= 22;
                     WaitValue <= 10;
                 when 22 => -- function set - str 9
-                    POLCDData <= "00101100";  -- Entry mode set
+                    POLCDData <= "01111100";  -- Entry mode set
                     state <= I2CSend;
                     after_state <= 23;
                     WaitValue <= 50;
@@ -223,11 +228,11 @@ begin
                 when 24 =>
                     POBusy <= '0';
                     init_state <= 0;
-                    state <= Ready;
+                    state <= writeData;
                 when others => null;
                 end case;
 
-            when I2CSend =>
+            when I2CSend =>     -- Data Send for Initialize
                 SBusyPrev <= SBusy;
 
                 if (SBusyPrev = '0' and SBusy = '1') then
@@ -236,7 +241,7 @@ begin
                 case busy_cnt is
                 when 0 =>
                     SEnable <= '1';
-                    SAddr   <= "0111111";
+                    SAddr   <= "0111111";   --Slave Address
                     SRW     <= '0';             --write
                     SDataWr <= POLCDData;
                 when 1 =>
@@ -249,14 +254,70 @@ begin
                     end if;
                 when others => null;
                 end case;
-
-            when Ready =>
-                ReadyCheck <= '1';
-
-
-            when Send =>
+            
+            when setRamAddress =>
                 
 
+            when writeData =>
+                wait_State <= writeData;
+                case ready_state is
+                    when 0 =>
+                        POLCDData <= "01011001";    -- for e = 0 
+                        state <= Send;
+                        WaitValue <= 100;
+                        ready_state <= 1;
+                    when 1 =>
+                        POLCDData <= "01011101";        -- Data Upper
+                        state <= Send;
+                        WaitValue <= 100;
+                        ready_state <= 2;
+                    when 2 =>
+                        POLCDData <= "01011001";
+                        state <= Send;
+                        WaitValue <= 100;
+                        ready_state <= 3;
+                    when 3 =>
+                        POLCDData <= "00001101";        -- Data Low
+                        state <= Send;
+                        WaitValue <= 100;
+                        ready_state <= 4;
+                    when 4 =>
+                        POLCDData <= "00001001";
+                        state <= Send;
+                        WaitValue <= 100;
+                        ready_state <= 5;
+                    when 5 =>                   -- for out the state
+                        state <= Idle;
+                        
+                    when others =>
+                        null;
+                end case;
+                
+
+            when Send =>
+                SBusyPrev <= SBusy;
+
+                if (SBusyPrev = '0' and SBusy = '1') then
+                busy_cnt <= busy_cnt + 1;
+                end if;
+                case busy_cnt is
+                when 0 =>
+                    SEnable <= '1';
+                    SAddr   <= "0111111";   -- Slave Address
+                    SRW     <= '0';             --write
+                    SDataWr <= POLCDData;
+                when 1 =>
+                    SEnable <= '0';
+                    if (SBusy = '0') then
+                    busy_cnt <= 0;
+                    SBusyPrev <= '0';
+                    state <= For_Wait;
+                    end if;
+                when others => null;
+                end case;
+
+            when Idle =>
+                null;
             
             when others =>
                 null;
